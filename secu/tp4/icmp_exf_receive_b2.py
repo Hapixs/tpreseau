@@ -5,6 +5,14 @@ import re
 import multiprocessing
 
 
+"""
+    Bon le 'multithreading' fonctionne, c'est juste scapy qui quand il fait un snif lock ses trucs
+    L'idée la c'est rendre tout ca jolie avec rich pour un jolie terminal
+    et apres ajouter des args et ensuite opti le code parceque c'est quand même dégueulasse.
+
+"""
+
+
 def clear():
     os.system('cls' if os.name=='nt' else 'clear')
 
