@@ -2,6 +2,7 @@ from scapy.all import *
 import sys
 import zlib
 import re
+import multiprocessing
 
 
 def clear():
@@ -9,24 +10,23 @@ def clear():
 
 class TransactionReader(object):
 
-    recievedData = bytes()
-    fType = None
-    fName = None
-    fPath = './'
-    tBlocks = 0
-    tBlocksRecieved = 0
-    enc = None
-
-    headerComplete = False
-    headerString = ""
-
-    currentThread: Thread = None
-
-    senderIp = ""
-
-    state = "N/A"
+    def __init__(self, senderIp):
+        self.recievedData = bytes()
+        self.fType = None
+        self.fName = None
+        self.fPath = './'
+        self.tBlocks = 0
+        self.tBlocksRecieved = 0
+        self.enc = None
+        self.headerComplete = False
+        self.headerString = ""
+        self.senderIp = senderIp
+        self.state = "N/A"
+        self.percent = 0
 
     def end_it_please(self):
+        self.state = "Saving ..."
+        os.makedirs(self.fPath, exist_ok=True)
         with open(f"{self.fPath}{self.fName}.{self.fType}", "w") as outfile:
             outfile.buffer.write(zlib.decompress(self.recievedData))
             outfile.close()
@@ -44,60 +44,61 @@ class TransactionReader(object):
                 self.fName =  re.search(r"fn-([a-zA-Z0-9_\-\/]+)[;]", self.headerString).group(1) or "latestFile" if "fn-" in self.headerString else "latestFile"
                 self.fPath =  re.search(r"fp-([a-zA-Z0-9_\-\/]+)[;]", self.headerString).group(1) or "./" if "fp-" in self.headerString else "./"
                 self.tBlocks = re.search(r"tb-([0-9]+)[;]", self.headerString).group(1) or 0 if "tb-" in self.headerString else 0
-                self.tBlocks=int(self.tBlocks)+1
+                self.tBlocks=int(self.tBlocks)
                 self.state = "Receiving ..."
                 return
             self.headerString+=bytes(padding).decode()
             return
         self.recievedData+=padding
         self.tBlocksRecieved+=1
-
-    def __start(self, sender_ip, dest_ip):
-        self.state = "Heading ..."
-        self.senderIp = sender_ip
-        sniff(filter=f"icmp and src host {sender_ip} and dst host {dest_ip}", prn=self.process_it_please, stop_filter=lambda packet: not packet.haslayer(Padding) or packet["Padding"].load==bytes("end transaction", "UTF8"))
-        self.state = "Saving ..."
-        self.end_it_please()
-
-
-    def startSniff(self, sender_ip, dest_ip):
-        self.currentThread = threading.Thread(target=self.__start(sender_ip, dest_ip))
-        self.currentThread.start()
-        self.currentThread.join()
+        self.percent = math.floor(self.tBlocksRecieved/self.tBlocks*100)
+        
 
 transactions: list[TransactionReader] = list()
+transactionmap = {}
 
 def process_it_please(packet):
     if (packet.haslayer(Padding)):
+        id = f'{packet["IP"].src}-{packet["IP"].dst}'
         load = packet['Padding'].load
         if(load == bytes("header","UTF8")):
-            t = TransactionReader()
+            t = TransactionReader(packet["IP"].src)
             transactions.append(t)
-            t.startSniff(packet["IP"].src, packet["IP"].dst)
+            if (id in transactionmap):
+                t.state = "Error ..."
+                transactionmap[id].state = "Error ..."
+                transactionmap[id].pop(id)
+                return
+            transactionmap[id] = t
+        if (not packet.haslayer(Padding) or packet["Padding"].load==bytes("end transaction", "UTF8")):
+            transactionmap[id].end_it_please()
+            transactionmap.pop(id)
+        else:
+            if (id in transactionmap):
+             transactionmap[id].process_it_please(packet)
         
 def mainSniff():
     sniff(filter="icmp", prn=process_it_please) 
 
 
 def update_the_screen_please():
-    while True:
-        clear()
-        print( """ 
-         ██▓███   ██▓ ███▄    █   ▄████     ███▄ ▄███▓▓█████ 
-        ▓██░  ██▒▓██▒ ██ ▀█   █  ██▒ ▀█▒   ▓██▒▀█▀ ██▒▓█   ▀ 
-        ▓██░ ██▓▒▒██▒▓██  ▀█ ██▒▒██░▄▄▄░   ▓██    ▓██░▒███   
-        ▒██▄█▓▒ ▒░██░▓██▒  ▐▌██▒░▓█  ██▓   ▒██    ▒██ ▒▓█  ▄ 
-        ▒██▒ ░  ░░██░▒██░   ▓██░░▒▓███▀▒   ▒██▒   ░██▒░▒████▒
-        ▒▓▒░ ░  ░░▓  ░ ▒░   ▒ ▒  ░▒   ▒    ░ ▒░   ░  ░░░ ▒░ ░
-        ░▒ ░      ▒ ░░ ░░   ░ ▒░  ░   ░    ░  ░      ░ ░ ░  ░
-        ░░        ▒ ░   ░   ░ ░ ░ ░   ░    ░      ░      ░   
-                  ░           ░       ░           ░      ░  ░
-        """)
-
-        print(f"Transactions: {len(transactions)}")
-        for t in transactions:
-            print(f"Transaction: [{t.senderIp}] {t.fPath}{t.fName}.{t.fType} => {t.tBlocksRecieved}/{t.tBlocks} | {t.state}")
-        time.sleep(0.1)
+     while True:
+         clear()
+         print( """ 
+          ██▓███   ██▓ ███▄    █   ▄████     ███▄ ▄███▓▓█████ 
+         ▓██░  ██▒▓██▒ ██ ▀█   █  ██▒ ▀█▒   ▓██▒▀█▀ ██▒▓█   ▀ 
+         ▓██░ ██▓▒▒██▒▓██  ▀█ ██▒▒██░▄▄▄░   ▓██    ▓██░▒███   
+         ▒██▄█▓▒ ▒░██░▓██▒  ▐▌██▒░▓█  ██▓   ▒██    ▒██ ▒▓█  ▄ 
+         ▒██▒ ░  ░░██░▒██░   ▓██░░▒▓███▀▒   ▒██▒   ░██▒░▒████▒
+         ▒▓▒░ ░  ░░▓  ░ ▒░   ▒ ▒  ░▒   ▒    ░ ▒░   ░  ░░░ ▒░ ░
+         ░▒ ░      ▒ ░░ ░░   ░ ▒░  ░   ░    ░  ░      ░ ░ ░  ░
+         ░░        ▒ ░   ░   ░ ░ ░ ░   ░    ░      ░      ░   
+                   ░           ░       ░           ░      ░  ░
+         """)
+         print(f"Transactions: {len(transactions)}")
+         for t in transactions:
+             print(f"Transaction: [{t.senderIp}] {t.fPath}{t.fName}.{t.fType} => ({t.tBlocksRecieved}/{t.tBlocks}) {t.percent}% | {t.state} ")
+         time.sleep(0.1)
 
 
 screenThread = threading.Thread(target=update_the_screen_please)
@@ -106,4 +107,4 @@ mainSniffThread = threading.Thread(target=mainSniff)
 screenThread.start()
 mainSniffThread.start()
 
-mainSniffThread.join()
+screenThread.join()

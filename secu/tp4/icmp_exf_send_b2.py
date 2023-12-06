@@ -11,6 +11,7 @@ ip = argv[1]
 with open(argv[2],"r") as outfile:
     data = outfile.buffer.read()
 
+cooldown = 0 if len(argv) < 4 else float(argv[3])
 
 print("Preparing text to be sent...")
 print(f"Original size: {sys.getsizeof(data)}")
@@ -29,7 +30,9 @@ splited =  argv[2].split('.')
 ftype = splited[len(splited)-1]
 fname = splited[0]
 
-header = f"ft-{ftype};fn-{fname};tb-{len(slicedData)};fp-recieved/;"
+header = f"ft-{ftype};fn-{fname};tb-{len(slicedData)};fp-rcvd/;"
+
+print("Header: "+header)
 
 sendSomething("header")
 
@@ -40,10 +43,12 @@ while(len(header) > 0):
 
 for h in slicedHeader:
     sendSomething(h)
+    time.sleep(cooldown)
 
 sendSomething("!header")
 
 for d in slicedData:
     sendSomething(d)
+    time.sleep(cooldown)
 
 sendSomething("end transaction")
